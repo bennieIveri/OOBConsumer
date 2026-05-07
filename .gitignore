@@ -1,0 +1,7 @@
+# Visual Studio workspace files
+.vs/
+# Project obj and bin folders
+***/obj/
+***/bin/
+# Log Folder
+***/logs/
