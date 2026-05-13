@@ -12,6 +12,7 @@ public class OOBDbContext : DbContext
     public DbSet<TransactionResponse> TransactionResponses { get; set; }
     public DbSet<TransactionResponseNameValue> TransactionResponseNameValues { get; set; }
     public DbSet<ProcessingStatus> ProcessingStatuses { get; set; }
+    public DbSet<ApplicationConfig> ApplicationConfigs { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -62,6 +63,17 @@ public class OOBDbContext : DbContext
             entity.HasKey(e => e.PS_Id);
             entity.Property(e => e.PS_Id).ValueGeneratedNever(); // Not an identity column
             entity.Property(e => e.PS_Description).HasMaxLength(64).IsUnicode(false).IsRequired();
+        });
+
+        // ApplicationConfig configuration
+        modelBuilder.Entity<ApplicationConfig>(entity =>
+        {
+            entity.ToTable("ApplicationConfig");
+            entity.HasKey(e => new { e.AC_ApplicationID, e.AC_KeyName, e.AC_Key });
+            entity.Property(e => e.AC_ApplicationID).ValueGeneratedNever();
+            entity.Property(e => e.AC_KeyName).HasMaxLength(128).IsUnicode(false).IsRequired();
+            entity.Property(e => e.AC_Key).HasMaxLength(512).IsUnicode(false).IsRequired();
+            entity.Property(e => e.AC_Value).HasMaxLength(2048).IsRequired();
         });
     }
 }

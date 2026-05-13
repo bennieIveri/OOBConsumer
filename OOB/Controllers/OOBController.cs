@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -11,6 +12,7 @@ using System.Buffers.Text;
 using System.IO;
 using System.Net.NetworkInformation;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -33,29 +35,30 @@ public class OOBController(OOBDbContext dbContext, ILogger<OOBController> logger
 
             _logger.Information("Request Recieved");
             RequestBody body = await GetTypeAndBody();
+            var headers = Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString());
+
+            if(headers.Count > 0)
+            {
+                _logger.Information("Received XML request headers: {RequestHeaders}", System.Text.Json.JsonSerializer.Serialize(headers));
+            }
 
 
             await Cleanup();
 
 
-            //Validate Source 
-            if (!await IsRequestFromTrustedSource(body))
-            {
-                _logger.Warning("Request from untrusted source rejected");
-                return BadRequest("Untrusted source");
-            }
+           
 
             TransactionResponse transactionResponse;
 
             if (body.type.Contains("xml"))
             {
-                _logger.Information("Received XML request body: {RequestBody}", body);
+                _logger.Information("Received XML request body: {RequestBody}", body.body);
                 transactionResponse = await ProcessXmlRequest(body.content);
             }
             else if (body.type.Contains("json"))
             {
 
-                _logger.Information("Received JSON request body: {RequestBody}", body);
+                _logger.Information("Received JSON request body: {RequestBody}", body.body);
                 transactionResponse = await ProcessJsonRequest(body.content);
             }
             else
@@ -63,6 +66,14 @@ public class OOBController(OOBDbContext dbContext, ILogger<OOBController> logger
                 _logger.Warning("Unsupported content type received: {ContentType}", body.type);
                 //logger.LogWarning("Unsupported content type received: {ContentType}", contentType);
                 return BadRequest("Unsupported content type. Use application/xml or application/json.");
+            }
+
+
+            //Validate Source 
+            if (!await IsRequestFromTrustedSource(body,transactionResponse.TR_ApplicationID, headers))
+            {
+                _logger.Warning("Request from untrusted source rejected");
+                return BadRequest("Untrusted source");
             }
 
             dbContext.TransactionResponses.Add(transactionResponse);
@@ -90,8 +101,56 @@ public class OOBController(OOBDbContext dbContext, ILogger<OOBController> logger
         }
     }
 
-    private async Task<bool> IsRequestFromTrustedSource(RequestBody body)
+
+
+    
+
+
+    private async Task<bool> IsRequestFromTrustedSource(RequestBody body, Guid appid, Dictionary<string, string> headers)
     {
+
+
+
+        if (headers.ContainsKey("Token")|| headers.ContainsKey("token"))
+        {
+            string key = headers.ContainsKey("key") ? headers["key"]: headers["Key"];
+            string token = headers.ContainsKey("token")? headers["token"] : headers["Token"];
+
+            //Get Secret from Database
+            ApplicationConfig conf = dbContext.ApplicationConfigs
+            .FirstOrDefault(config => config.AC_ApplicationID == appid
+                && config.AC_Key == key
+                && config.AC_KeyName == "APIKey.Secret");
+
+
+            if (conf != null)
+            {
+                string[] parts = token.Split(':');
+
+                string time = parts[0];
+                string secret = conf.AC_Value;
+                string seckey = parts[1];
+                string url =  $"{Request.Scheme}://{Request.Host}{Request.PathBase}{Request.Path}";
+
+
+                string toHash = time + new Uri(url).AbsolutePath + body.body;
+                StringBuilder hash = new StringBuilder();
+                using (HMACSHA256 sha = new HMACSHA256(Encoding.ASCII.GetBytes(secret)))
+                {
+                    foreach (byte b in sha.ComputeHash(Encoding.ASCII.GetBytes(toHash)))
+                        hash.Append(b.ToString("x2"));
+                }
+
+
+
+                if (hash.ToString() != seckey)
+                {
+                    return false;
+                }
+            }
+        }
+        //No Token Specified no need for validation
+
 
         return true;
     }
@@ -145,7 +204,7 @@ public class OOBController(OOBDbContext dbContext, ILogger<OOBController> logger
             decoded_body = body;
         }
 
-        return new RequestBody() { content = decoded_body, type = contentType };
+        return new RequestBody() { content = decoded_body, type = contentType ,body= b64 };
     }
 
     private async Task Cleanup()
@@ -429,5 +488,7 @@ public class OOBController(OOBDbContext dbContext, ILogger<OOBController> logger
     {
         public string type { get; set; }
         public string content { get; set; }
+
+        public string body { get; set; }
     }
 }
